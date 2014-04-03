@@ -8,17 +8,18 @@ var os = require('os');
 var crypto = require('crypto');
 
 try {
-var WebSocket = require('ws');
+  var WebSocket = require('ws');
 }
 catch(e) {
 }
 
 function debug(e) {
-  if(e.stack) {
+  if (e && e.stack) {
     util.debug(e + '\n' + e.stack);
   }
-  else
+  else {
     util.debug(util.inspect(e));
+  }
 }
 
 function toBase64(s) { 
@@ -625,7 +626,7 @@ function makeWsTransport(options, callback) {
 
   function get(flow, error) {
     var ws = flows[[flow.address, flow.port, flow.local.address, flow.local.port].join()];
-    if(ws) {
+    if (ws) {
       return {
         send: function(m) {
           ws.send(stringify(m));    
@@ -635,13 +636,19 @@ function makeWsTransport(options, callback) {
         protocol: 'WS'
       };
     }
+    else {
+      console.log("sip#makeWsTransport ws not is there");
+      console.log("sip#makeWsTransport flows = " + debug(flows) );
+      console.log("sip#makeWsTransport flow = " + debug(flow) );
+      return null;
+    }
   }
 
   return {
     get: get,
     open: get,
     destroy: function() { server.close(); }
-  }
+  };
 }
 
 
@@ -722,10 +729,18 @@ function makeTransport(options, callback) {
 
   return {
     open: function(target, error) {
-      return wrap(protocols[target.protocol.toUpperCase()].open(target, error), target);
+      var transportObj = protocols[target.protocol.toUpperCase()].open(target, error);
+      if (!transportObj) {
+          throw new Error('transport not found');
+      }
+      return wrap(transportObj, target);
     },
     get: function(target, error) {
-      return wrap(protocols[target.protocol.toUpperCase()].get(target, error), target);
+      var transportObj = protocols[target.protocol.toUpperCase()].get(target, error);
+      if (!transportObj) {
+          throw new Error('transport not found');
+      }
+      return wrap(transportObj, target);
     },
     send: function(target, message) {
       var cn = this.open(target);
@@ -1203,13 +1218,14 @@ exports.create = function(options, callback) {
 
       if(!t) {
         if(m.method && m.method !== 'ACK') {
-          var t = transaction.createServerTransaction(m, transport.get(remote));
+          var transCon = transport.get(remote);
+          t = transaction.createServerTransaction(m, transCon);
           try {
             callback(m,remote);
           } catch(e) {
             t.send(makeResponse(m, '500', 'Internal Server Error'));
             throw e;
-          } 
+          }
         }
         else if(m.method === 'ACK') {
           callback(m,remote);
