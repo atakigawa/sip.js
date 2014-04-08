@@ -25,7 +25,7 @@ function defaultCallback(rs) {
     exports.send(rs);
 }
 
-exports.send = function(msg, callback) {
+exports.send = function(msg, msgPath, callback) {
     myLogger.debug("proxy#send");
     var ctx = contexts[makeContextId(msg)];
 
@@ -35,12 +35,12 @@ exports.send = function(msg, callback) {
     }
 
     return msg.method ?
-        forwardRequest(ctx, msg, callback || defaultCallback) :
-        forwardResponse(ctx, msg);
+        forwardRequest(ctx, msg, msgPath, callback || defaultCallback) :
+        forwardResponse(ctx, msg, msgPath);
 };
 
 
-function forwardResponse(ctx, rs, callback) {
+function forwardResponse(ctx, rs, rsPath, callback) {
     myLogger.debug("proxy#forwardResponse");
     if (+rs.status >= 200) {
         delete contexts[makeContextId(rs)];
@@ -50,7 +50,7 @@ function forwardResponse(ctx, rs, callback) {
 }
 
 
-function sendCancel(rq, via, route) {
+function sendCancel(rq, rqPath, via, route) {
     sip.send({
         method: 'CANCEL',
         uri: rq.uri,
@@ -62,24 +62,23 @@ function sendCancel(rq, via, route) {
             route: route,
             cseq: {method: 'CANCEL', seq: rq.headers.cseq.seq}
         }
-    });
+    }, rqPath);
 }
 
 
-function forwardRequest(ctx, rq, callback) {
+function forwardRequest(ctx, rq, rqPath, callback) {
     myLogger.debug("proxy#forwardRequest");
     var route = rq.headers.route && rq.headers.route.slice();
-    sip.send(rq, function(rs, remote) {
-        myLogger.debug("proxy#send sip.send callback");
-        myLogger.debug(util.inspect(rs));
+    sip.send(rq, rqPath, function(rs, remote) {
+        myLogger.debug("proxy#forwardRequest sip.send callback");
         if (+rs.status < 200) {
             var via = rs.headers.via[0];
             ctx.cancellers[rs.headers.via[0].params.branch] = function() {
-                sendCancel(rq, via, route);
+                sendCancel(rq, rqPath, via, route);
             };
 
             if (ctx.cancelled) {
-                sendCancel(rq, via, route);
+                sendCancel(rq, rqPath, via, route);
             }
         }
         else {
@@ -91,12 +90,12 @@ function forwardRequest(ctx, rq, callback) {
 }
 
 
-function onRequest(rq, remote, callback) {
+function onRequest(rq, flow, callback) {
     var id = makeContextId(rq);
     contexts[id] = { cancellers: {} };
 
     try {
-        callback(sip.copyMessage(rq), remote);
+        callback(sip.copyMessage(rq), flow);
     } catch(e) {
         delete contexts[id];
         throw e;
@@ -105,7 +104,7 @@ function onRequest(rq, remote, callback) {
 
 
 exports.start = function(options, onRequestCallback) {
-    sip.start(options, function(rq, remote) {
+    sip.start(options, function(rq, flow) {
         if (rq.method === 'CANCEL') {
             var ctx = contexts[makeContextId(rq)];
 
@@ -120,11 +119,11 @@ exports.start = function(options, onRequestCallback) {
                 }
             }
             else {
-                sip.send(sip.makeResponse(rq, 481));
+                sip.send(sip.makeResponse(rq, 481, 'Call Leg/Transaction Does Not Exist'));
             }
         }
         else {
-            onRequest(rq, remote, onRequestCallback);
+            onRequest(rq, flow, onRequestCallback);
         }
     });
 };

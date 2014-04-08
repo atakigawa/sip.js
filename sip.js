@@ -624,8 +624,8 @@ function makeWsTransport(options, callback) {
     var server = new WebSocket.Server({port:options.ws_port});
     server.on('connection', function(ws) {
         var remote = {address: ws._socket.remoteAddress, port: ws._socket.remotePort},
-                local = {address: ws._socket.address().address, port: ws._socket.address().port}
-                flowid = [remote.address, remote.port, local.address, local.port].join();
+            local = {address: ws._socket.address().address, port: ws._socket.address().port};
+            flowid = [remote.address, remote.port, local.address, local.port].join();
 
         flows[flowid] = ws;
 
@@ -643,6 +643,7 @@ function makeWsTransport(options, callback) {
     });
 
     function get(flow, error) {
+        myLogger.debug("wsTranport#get");
         var ws = flows[[flow.address, flow.port, flow.local.address, flow.local.port].join()];
         if (ws) {
             return {
@@ -655,9 +656,10 @@ function makeWsTransport(options, callback) {
             };
         }
         else {
-            myLogger.debug("sip#makeWsTransport ws not is there");
-            myLogger.debug("sip#makeWsTransport flows = " + debug(flows) );
-            myLogger.debug("sip#makeWsTransport flow = " + debug(flow) );
+            var lgr = log4js.getLogger("sip_core_error");
+            lgr.error("wsTransport#get ws not is there");
+            lgr.error("wsTransport#get flows = " + debug(flows) );
+            lgr.error("wsTransport#get flow = " + debug(flow) );
             return null;
         }
     }
@@ -803,13 +805,12 @@ var resolveSrv = makeWellBehavingResolver(dns.resolveSrv);
 var resolve4 = makeWellBehavingResolver(dns.resolve4);
 var resolve6 = makeWellBehavingResolver(dns.resolve6);
 
-function resolve(uri, action) {
+function resolve(uri, callback) {
     myLogger.debug("sip#resolve");
     myLogger.debug(util.inspect(uri));
-    myLogger.debug(util.inspect(action));
-    if(net.isIP(uri.host)) {
+    if (net.isIP(uri.host)) {
         var protocol = uri.params.transport || 'UDP';
-        return action([{protocol: protocol, address: uri.host, port: uri.port || defaultPort(protocol)}]);
+        return callback([{protocol: protocol, address: uri.host, port: uri.port || defaultPort(protocol)}]);
     }
 
     function resolve46(host, cb) {
@@ -823,15 +824,22 @@ function resolve(uri, action) {
         });
     }
 
-    if(uri.port) {
+    if (uri.port) {
         var protocols = uri.params.protocol ? [uri.params.protocol] : ['UDP', 'TCP', 'TLS'];
 
         resolve46(uri.host, function(err, address) {
-            address = (address || []).map(function(x) { return protocols.map(function(p) { return { protocol: p, address: x, port: uri.port || defaultPort(p)};});}
-
-)
-                .reduce(function(arr,v) { return arr.concat(v); }, []);
-                action(address);
+            address = (address || []).map(function(x) {
+                return protocols.map(function(p) {
+                    return {
+                        protocol: p,
+                        address: x,
+                        port: uri.port || defaultPort(p)
+                    };
+                });
+            }).reduce(function(arr,v) {
+                return arr.concat(v);
+            }, []);
+            callback(address);
         });
     }
     else {
@@ -851,20 +859,20 @@ function resolve(uri, action) {
                             addresses = addresses.concat((r||[]).map(function(a) { return {protocol: proto, address: a, port: srv.port};}));
 
                             if((--n)===0) // all outstanding requests has completed
-                                action(addresses);
+                                callback(addresses);
                         });
                     });
                 }
                 else if(0 === n) {
                     if(addresses.length) {
-                        action(addresses);
+                        callback(addresses);
                     }
                     else {
                         // all srv requests failed
                         resolve46(uri.host, function(err, address) {
                             address = (address || []).map(function(x) { return protocols.map(function(p) { return { protocol: p, address: x, port: uri.port || defaultPort(p)};});})
                                 .reduce(function(arr,v) { return arr.concat(v); }, []);
-                            action(address);
+                            callback(address);
                         });
                     }
                 }
@@ -877,7 +885,7 @@ exports.resolve = resolve;
 
 //transaction layer
 function generateBranch() {
-    return ['z9hG4bK',Math.round(Math.random()*1000000)].join('');
+    return ['z9hG4bK', Math.round(Math.random()*1000000)].join('');
 }
 
 exports.generateBranch = generateBranch;
@@ -903,6 +911,7 @@ function makeSM() {
 }
 
 function createInviteServerTransaction(transport, cleanup) {
+    myLogger.debug("createInviteServerTransaction");
     var sm = makeSM();
     var rs;
 
@@ -994,6 +1003,7 @@ function createServerTransaction(transport, cleanup) {
 }
 
 function createInviteClientTransaction(rq, transport, tu, cleanup, options) {
+    myLogger.debug("createInviteClientTransaction");
     var sm = makeSM();
 
     var a, b;
@@ -1009,7 +1019,7 @@ function createInviteClientTransaction(rq, transport, tu, cleanup, options) {
             }
 
             b = setTimeout(function() {
-                tu(makeResponse(rq, 503));
+                tu(makeResponse(rq, 503, 'Service Unavailable'));
                 sm.enter(terminated);
             }, 32000);
         },
@@ -1113,7 +1123,7 @@ function createClientTransaction(rq, transport, tu, cleanup) {
             e = setTimeout(function() { sm.signal('timerE', t*2); }, t*2);
         },
         timerF: function() {
-            tu(makeResponse(rq, 503));
+            tu(makeResponse(rq, 503, 'Service Unavailable'));
             sm.enter(terminated);
         }
     };
@@ -1151,6 +1161,7 @@ function makeTransactionLayer(options, transport) {
 
     return {
         createServerTransaction: function(rq, cn) {
+            myLogger.debug("createServerTransaction");
             var id = makeTransactionId(rq);
 
             server_transactions[id] = (rq.method === 'INVITE' ? createInviteServerTransaction : createServerTransaction)(
@@ -1163,10 +1174,14 @@ function makeTransactionLayer(options, transport) {
             return server_transactions[id];
         },
         createClientTransaction: function(connection, rq, callback) {
-            if(rq.method !== 'CANCEL') rq.headers.via[0].params.branch = generateBranch();
+            myLogger.debug("createClientTransaction");
+            if (rq.method !== 'CANCEL') {
+                rq.headers.via[0].params.branch = generateBranch();
+            }
 
-            if(typeof rq.headers.cseq !== 'object')
+            if (typeof rq.headers.cseq !== 'object') {
                 rq.headers.cseq = parseCSeq({s: rq.headers.cseq, i:0});
+            }
 
             var send = connection.send.bind(connection);
             send.reliable = connection.protocol.toUpperCase() !== 'UDP';
@@ -1201,6 +1216,7 @@ exports.makeTransactionLayer = makeTransactionLayer;
 
 function sequentialSearch(transaction, connect, addresses, rq, callback) {
     myLogger.debug("sip#sequentialSearch");
+    myLogger.debug(util.inspect(transaction));
     if(rq.method !== 'CANCEL') {
         if(!rq.headers.via) rq.headers.via = [];
         rq.headers.via.unshift({params:{}});
@@ -1210,23 +1226,28 @@ function sequentialSearch(transaction, connect, addresses, rq, callback) {
     function next() {
         onresponse = searching;
 
-        if(addresses.length > 0) {
+        if (addresses.length > 0) {
             try {
                 var address = addresses.shift();
                 var client = transaction(
                     connect(
                         address,
-                        function() { client.message(makeResponse(rq, 503));}
+                        function() { client.message(makeResponse(rq, 503, 'Service Unavailable'));}
                     ),
                     rq,
-                    function() { onresponse.apply(null, arguments); });
+                    function() { onresponse.apply(null, arguments); }
+                );
             }
             catch(e) {
-                onresponse(address.local ? makeResponse(rq, 430) : makeResponse(rq, 503));
+                onresponse(address.local ?
+                        makeResponse(rq, 430, 'Flow Failed') :
+                        makeResponse(rq, 503, 'Service Unavailable')
+                );
             }
         }
-        else
-            onresponse(makeResponse(rq, 404));
+        else {
+            onresponse(makeResponse(rq, 404, 'Not Found'));
+        }
     }
 
     function searching(rs) {
@@ -1294,10 +1315,10 @@ exports.create = function(options, callback) {
     }
 
     return {
-        send: function(m, callback) {
+        send: function(m, msgPath, callback) {
             myLogger.debug("sip#exports.send");
             //responding to client
-            if(m.method === undefined) {
+            if (m.method === undefined) {
                 var t = transaction.getServer(m);
                 t && t.send && t.send(m);
             }
@@ -1305,18 +1326,18 @@ exports.create = function(options, callback) {
             else {
                 var hop = parseUri(m.uri);
 
-                if(typeof m.headers.route === 'string') {
-                    rq.headers.route = parsers.route({s: m.headers.route, i:0});
+                if (typeof m.headers.route === 'string') {
+                    m.headers.route = parsers.route({s: m.headers.route, i:0});
                 }
 
-                if(m.headers.route && m.headers.route.length > 0) {
+                if (m.headers.route && m.headers.route.length > 0) {
                     hop = parseUri(m.headers.route[0].uri);
-                    if(hop.host === hostname) {
+                    if (hop.host === hostname) {
                         m.headers.route.shift();
                     }
-                    else if(hop.params.lr === undefined ) {
+                    else if (hop.params.lr === undefined) {
                         m.headers.route.shift();
-                        m.headers.route.push({uri: rq.uri});
+                        m.headers.route.push({uri: m.uri});
                         m.uri = hop;
                     }
                 }
@@ -1354,10 +1375,30 @@ exports.create = function(options, callback) {
 
                 myLogger.debug("hop = ");
                 myLogger.debug(util.inspect(hop));
-                if(hop.host === hostname) {
+                if (hop.host === hostname) {
                     var flow = decodeFlowToken(hop.user);
                     _send(flow ? [flow] : []);
                 }
+                //for websocket transport, we always need the ws connection
+                //info for both requester and requestee. The ideal for sip
+                //is to be able to know all information from just looking
+                //at the text message, but when websocket comes in, the
+                //text message, the src ws connection, and the dest ws
+                //connection can't be torn apart.
+                else if (msgPath) {
+                    var protocol = hop.params.transport || 'UDP';
+                    var addresses = [{
+                        protocol: protocol,
+                        address: msgPath.dstFlow.address,
+                        port: msgPath.dstFlow.port,
+                        local: {
+                            address: msgPath.dstFlow.local.address,
+                            port: msgPath.dstFlow.local.port,
+                        }
+                    }];
+                    _send(addresses);
+                }
+                //this only cares about the remote destination.
                 else {
                     resolve(hop, _send);
                 }
