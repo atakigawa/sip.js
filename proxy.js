@@ -2,7 +2,7 @@ var sip=require('sip');
 var util=require('util');
 
 var log4js = require('log4js');
-log4js.configure('log4j_config.json');
+log4js.configure('log4js_config.json');
 var myLogger = log4js.getLogger("sip_proxy");
 
 //holds canceller method info for each req/res pair

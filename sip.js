@@ -8,7 +8,7 @@ var os = require('os');
 var crypto = require('crypto');
 
 var log4js = require('log4js');
-log4js.configure('log4j_config.json');
+log4js.configure('log4js_config.json');
 var myLogger = log4js.getLogger("sip_core");
 
 try {
