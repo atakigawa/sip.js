@@ -69,7 +69,8 @@ function sendCancel(rq, rqPath, via, route) {
 function forwardRequest(ctx, rq, rqPath, callback) {
     myLogger.debug("proxy#forwardRequest");
     var route = rq.headers.route && rq.headers.route.slice();
-    sip.send(rq, rqPath, function(rs, remote) {
+
+    sip.send(rq, rqPath, function(rs, flow) {
         myLogger.debug("proxy#forwardRequest sip.send callback");
         if (+rs.status < 200) {
             var via = rs.headers.via[0];
@@ -85,7 +86,7 @@ function forwardRequest(ctx, rq, rqPath, callback) {
             delete ctx.cancellers[rs.headers.via[0].params.branch];
         }
 
-        callback(rs, remote);
+        callback(rs, flow);
     });
 }
 
@@ -102,30 +103,37 @@ function onRequest(rq, flow, callback) {
     }
 }
 
+function onCancelRequest(rq, flow) {
+    var ctx = contexts[makeContextId(rq)];
 
-exports.start = function(options, onRequestCallback) {
-    sip.start(options, function(rq, flow) {
-        if (rq.method === 'CANCEL') {
-            var ctx = contexts[makeContextId(rq)];
+    if (ctx) {
+        sip.send(sip.makeResponse(rq, 200));
 
-            if (ctx) {
-                sip.send(sip.makeResponse(rq, 200));
+        ctx.cancelled = true;
+        if (ctx.cancellers) {
+            Object.keys(ctx.cancellers).forEach(function(c) {
+                ctx.cancellers[c]();
+            });
+        }
+    }
+    else {
+        sip.send(sip.makeResponse(rq, 481, 'Call Leg/Transaction Does Not Exist'));
+    }
+}
 
-                ctx.cancelled = true;
-                if (ctx.cancellers) {
-                    Object.keys(ctx.cancellers).forEach(function(c) {
-                        ctx.cancellers[c]();
-                    });
-                }
+exports.start = function(options, onRequestCallback, optCallbacks) {
+    sip.start(
+        options,
+        function(rq, flow) {
+            if (rq.method === 'CANCEL') {
+                onCancelRequest(rq, flow);
             }
             else {
-                sip.send(sip.makeResponse(rq, 481, 'Call Leg/Transaction Does Not Exist'));
+                onRequest(rq, flow, onRequestCallback);
             }
-        }
-        else {
-            onRequest(rq, flow, onRequestCallback);
-        }
-    });
+        },
+        optCallbacks
+    );
 };
 
 exports.stop = sip.stop;

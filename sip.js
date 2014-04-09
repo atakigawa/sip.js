@@ -503,13 +503,13 @@ function checkMessage(msg) {
         msg.headers.cseq;
 }
 
-function makeStreamTransport(protocol, connect, createServer, callback) {
+function makeStreamTransport(protocol, connect, createServer, callback, optCallbacks) {
     var remotes = Object.create(null);
     var flows = Object.create(null);
 
     function init(stream, remote) {
         var remoteid = [remote.address, remote.port].join(),
-            flowid = undefined,
+            flowid,
             refs = 0;
 
         stream.setEncoding('ascii');
@@ -594,7 +594,7 @@ function makeStreamTransport(protocol, connect, createServer, callback) {
     };
 }
 
-function makeTlsTransport(options, callback) {
+function makeTlsTransport(options, callback, optCallbacks) {
     return makeStreamTransport(
         'TLS',
         function(port, host, callback) { return tls.connect(port, host, options.tls, callback); },
@@ -603,10 +603,11 @@ function makeTlsTransport(options, callback) {
             server.listen(options.tls_port || 5061, options.address);
             return server;
         },
-        callback);
+        callback,
+        optCallbacks);
 }
 
-function makeTcpTransport(options, callback) {
+function makeTcpTransport(options, callback, optCallbacks) {
     return makeStreamTransport(
         'TCP',
         function(port, host, callback) { return net.connect(port, host, callback); },
@@ -615,16 +616,31 @@ function makeTcpTransport(options, callback) {
             server.listen(options.port || 5060, options.address);
             return server;
         },
-        callback);
+        callback,
+        optCallbacks);
 }
 
-function makeWsTransport(options, callback) {
+function makeWsTransport(options, callback, optCallbacks) {
     var flows = Object.create(null);
 
     var server = new WebSocket.Server({port:options.ws_port});
     server.on('connection', function(ws) {
-        var remote = {address: ws._socket.remoteAddress, port: ws._socket.remotePort},
-            local = {address: ws._socket.address().address, port: ws._socket.address().port};
+        var remote = {
+                address: ws._socket.remoteAddress,
+                port: ws._socket.remotePort
+            },
+            local = {
+                address: ws._socket.address().address,
+                port: ws._socket.address().port
+            },
+            flow = {
+                address: remote.address,
+                port: remote.port,
+                local: {
+                    address: local.address,
+                    port: local.port
+                }
+            },
             flowid = [remote.address, remote.port, local.address, local.port].join();
 
         flows[flowid] = ws;
@@ -632,6 +648,9 @@ function makeWsTransport(options, callback) {
         ws.on('close', function() {
             myLogger.debug("sip#makeWsTransport ws.on(close)");
             delete flows[flowid];
+            if (optCallbacks.onClose) {
+                optCallbacks.onClose(flow);
+            }
         });
 
         ws.on('message', function(data) {
@@ -672,7 +691,7 @@ function makeWsTransport(options, callback) {
 }
 
 
-function makeUdpTransport(options, callback) {
+function makeUdpTransport(options, callback, optCallbacks) {
     function onMessage(data, rinfo) {
         var msg = parseMessage(data);
 
@@ -711,25 +730,29 @@ function makeUdpTransport(options, callback) {
     };
 }
 
-function makeTransport(options, callback) {
+function makeTransport(options, onMsgCallback, optCallbacks) {
     var protocols = {};
 
-    var callbackAndLog = callback;
+    var onMsgCallbackWrap = onMsgCallback;
     if(options.logger && options.logger.recv) {
-        callbackAndLog = function(m, remote, stream) {
+        onMsgCallbackWrap = function(m, remote, stream) {
             options.logger.recv(m, remote);
-            callback(m, remote, stream);
+            onMsgCallback(m, remote, stream);
         };
     }
 
-    if(options.udp === undefined || options.udp)
-        protocols.UDP = makeUdpTransport(options, callbackAndLog);
-    if(options.tcp === undefined || options.tcp)
-        protocols.TCP = makeTcpTransport(options, callbackAndLog);
-    if(options.tls)
-        protocols.TLS = makeTlsTransport(options, callbackAndLog);
-    if(options.ws_port && WebSocket)
-        protocols.WS = makeWsTransport(options, callbackAndLog);
+    if (options.udp === undefined || options.udp) {
+        protocols.UDP = makeUdpTransport(options, onMsgCallbackWrap, optCallbacks);
+    }
+    if (options.tcp === undefined || options.tcp) {
+        protocols.TCP = makeTcpTransport(options, onMsgCallbackWrap, optCallbacks);
+    }
+    if (options.tls) {
+        protocols.TLS = makeTlsTransport(options, onMsgCallbackWrap, optCallbacks);
+    }
+    if (options.ws_port && WebSocket) {
+        protocols.WS = makeWsTransport(options, onMsgCallbackWrap, optCallbacks);
+    }
 
     function wrap(obj, target) {
         return Object.create(obj, {send: {value: function(m) {
@@ -1216,7 +1239,6 @@ exports.makeTransactionLayer = makeTransactionLayer;
 
 function sequentialSearch(transaction, connect, addresses, rq, callback) {
     myLogger.debug("sip#sequentialSearch");
-    myLogger.debug(util.inspect(transaction));
     if(rq.method !== 'CANCEL') {
         if(!rq.headers.via) rq.headers.via = [];
         rq.headers.via.unshift({params:{}});
@@ -1262,26 +1284,28 @@ function sequentialSearch(transaction, connect, addresses, rq, callback) {
     next();
 }
 
-exports.create = function(options, callback) {
+exports.create = function(options, onMsgCallback, optCallbacks) {
     var errorLog = (options.logger && options.logger.error) || function() {};
 
-    var transport = makeTransport(options, function(m,remote) {
+    var transport = makeTransport(options, function(m, remote) {
+        myLogger.debug("makeTransport onMessage. \nfrom = " + util.inspect(remote));
         try {
             var t = m.method ? transaction.getServer(m) : transaction.getClient(m);
 
-            if(!t) {
+            //no transaction yet. start one if needed.
+            if (!t) {
                 if(m.method && m.method !== 'ACK') {
                     var transCon = transport.get(remote);
                     t = transaction.createServerTransaction(m, transCon);
                     try {
-                        callback(m,remote);
+                        onMsgCallback(m,remote);
                     } catch(e) {
                         t.send(makeResponse(m, '500', 'Internal Server Error'));
                         throw e;
                     }
                 }
                 else if(m.method === 'ACK') {
-                    callback(m,remote);
+                    onMsgCallback(m,remote);
                 }
             }
             else {
@@ -1291,7 +1315,7 @@ exports.create = function(options, callback) {
         catch(e) {
             errorLog(e);
         }
-    });
+    }, optCallbacks);
 
     var transaction = makeTransactionLayer(options, transport.open.bind(transport));
     var hostname = options.publicAddress || options.address || options.hostname || os.hostname();
@@ -1422,8 +1446,8 @@ exports.create = function(options, callback) {
     };
 };
 
-exports.start = function(options, callback) {
-    var r = exports.create(options, callback);
+exports.start = function(options, onMsgCallback, optCallbacks) {
+    var r = exports.create(options, onMsgCallback, optCallbacks);
 
     exports.send = r.send;
     exports.stop = r.destroy;
