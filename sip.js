@@ -4,6 +4,8 @@ var dns = require('dns');
 var assert = require('assert');
 var dgram = require('dgram');
 var tls = require('tls');
+var https = require('https');
+var fs = require('fs');
 var os = require('os');
 var crypto = require('crypto');
 
@@ -623,7 +625,22 @@ function makeTcpTransport(options, callback, optCallbacks) {
 function makeWsTransport(options, callback, optCallbacks) {
     var flows = Object.create(null);
 
-    var server = new WebSocket.Server({port:options.ws_port});
+    var wsServerInitObj = {port: options.ws_port};
+
+    if (options.ws_ssl) {
+        var dummyReqHandler = function(req, res) {
+            res.writeHead(404);
+            res.end();
+        };
+        var srv = https.createServer({
+            key: fs.readFileSync(options.ws_ssl.key),
+            cert: fs.readFileSync(options.ws_ssl.cert)
+        }, dummyReqHandler).listen(options.ws_ssl.port);
+
+        wsServerInitObj = {server: srv};
+    }
+
+    var server = new WebSocket.Server(wsServerInitObj);
     server.on('connection', function(ws) {
         var remote = {
                 address: ws._socket.remoteAddress,
