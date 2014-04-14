@@ -430,6 +430,7 @@ exports.copyMessage = function(msg, deep) {
     return r;
 };
 
+//TODO: have to check places where using this function...
 function defaultPort(proto) {
     return proto.toUpperCase() === 'TLS' ? 5061 : 5060;
 }
@@ -507,7 +508,7 @@ function checkMessage(msg) {
 
 function makeStreamTransport(protocol, connect, createServer, callback, optCallbacks) {
     var remotes = Object.create(null);
-    var flows = Object.create(null);
+    //var flows = Object.create(null);
 
     function init(stream, remote) {
         var remoteid = [remote.address, remote.port].join(),
@@ -526,7 +527,7 @@ function makeStreamTransport(protocol, connect, createServer, callback, optCallb
                         port: stream.remotePort,
                         local: {
                             address: stream.localAddress,
-                             port: stream.localPort
+                            port: stream.localPort
                         }
                     },
                     stream
@@ -535,15 +536,16 @@ function makeStreamTransport(protocol, connect, createServer, callback, optCallb
         }));
 
         stream.on('close',    function() {
-            if(flowid) delete flows[id];
-            delete connections[id];
+            //if(flowid) delete flows[id];
+            delete remotes[remoteid];
         });
         stream.on('connect', function() {
-            flowid = [remoteid,stream.localAddress, stream.localPort].join();
-            flows[flowid] = remotes[remoteid];
+            //flowid = [remoteid,stream.localAddress, stream.localPort].join();
+            //flows[flowid] = remotes[remoteid];
         });
 
         stream.on('error',    function() {});
+
         stream.on('end',      function() {
             if(refs !== 0) stream.emit('error', new Error('remote peer disconnected'));
             stream.end();
@@ -553,44 +555,55 @@ function makeStreamTransport(protocol, connect, createServer, callback, optCallb
         stream.setTimeout(120000);
         stream.setMaxListeners(10000);
 
-        remote[remoteid] = function(onError) {
+        remotes[remoteid] = function(onError) {
             ++refs;
-            if(onError) stream.on('error', onError);
+            if (onError) stream.on('error', onError);
 
             return {
+                send: function(m) {
+                    stream.write(stringify(m), 'ascii');
+                },
                 release: function() {
                     if(onError) stream.removeListener('error', onError);
                     if(--refs === 0) stream.emit('no_reference');
                 },
-                send: function(m) {
-                    stream.write(stringify(m), 'ascii');
-                },
-                protocol: protocol
+                protocol: protocol,
+                local: {
+                    address: stream.localAddress,
+                    port: stream.localPort
+                }
             };
         };
 
-        return connections[id];
+        return remotes[id];
     }
 
     var server = createServer(function(stream) {
-        init(stream, {protocol: protocol, address: stream.remoteAddress, port: stream.remotePort});
+        init(
+            stream,
+            {protocol: protocol, address: stream.remoteAddress, port: stream.remotePort}
+        );
     });
 
     return {
-        open: function(remote, error, dontopen) {
+        open: function(remote, onError, dontopen) {
             var id = [remote.address, remote.port].join();
-
-            if(id in connections) return connections[id](error);
-
-            if(dontopen) return null;
-
-            return init(connect(remote.port, remote.address), remote)(error);
+            if (id in remotes) {
+                return remotes[id](onError);
+            }
+            if (dontopen) {
+                return null;
+            }
+            return init(connect(remote.port, remote.address), remote)(onError);
         },
-        get: function(address, error) {
-            var c = address.local ? flows[[address.address, address.port, address.local.address, address.local.port].join()]
-                : remotes[[address.address, address.port].join()];
-
-            return c && c(error);
+        get: function(remote, onError) {
+            var id = [remote.address, remote.port].join();
+            if (id in remotes) {
+                return remotes[id](onError);
+            }
+            else {
+                return null;
+            }
         },
         destroy: function() { server.close(); }
     };
@@ -599,7 +612,9 @@ function makeStreamTransport(protocol, connect, createServer, callback, optCallb
 function makeTlsTransport(options, callback, optCallbacks) {
     return makeStreamTransport(
         'TLS',
-        function(port, host, callback) { return tls.connect(port, host, options.tls, callback); },
+        function(port, host, callback) {
+            return tls.connect(port, host, options.tls, callback);
+        },
         function(callback) {
             var server = tls.createServer(options.tls, callback);
             server.listen(options.tls_port || 5061, options.address);
@@ -612,7 +627,9 @@ function makeTlsTransport(options, callback, optCallbacks) {
 function makeTcpTransport(options, callback, optCallbacks) {
     return makeStreamTransport(
         'TCP',
-        function(port, host, callback) { return net.connect(port, host, callback); },
+        function(port, host, callback) {
+            return net.connect(port, host, callback);
+        },
         function(callback) {
             var server = net.createServer(callback);
             server.listen(options.port || 5060, options.address);
@@ -622,23 +639,8 @@ function makeTcpTransport(options, callback, optCallbacks) {
         optCallbacks);
 }
 
-function makeWsTransport(options, callback, optCallbacks) {
+function makeWsTransportInner(protocol, wsServerInitObj, callback, optCallbacks) {
     var flows = Object.create(null);
-
-    var wsServerInitObj = {port: options.ws_port};
-
-    if (options.ws_ssl) {
-        var dummyReqHandler = function(req, res) {
-            res.writeHead(404);
-            res.end();
-        };
-        var srv = https.createServer({
-            key: fs.readFileSync(options.ws_ssl.key),
-            cert: fs.readFileSync(options.ws_ssl.cert)
-        }, dummyReqHandler).listen(options.ws_ssl.port);
-
-        wsServerInitObj = {server: srv};
-    }
 
     var server = new WebSocket.Server(wsServerInitObj);
     server.on('connection', function(ws) {
@@ -663,7 +665,6 @@ function makeWsTransport(options, callback, optCallbacks) {
         flows[flowid] = ws;
 
         ws.on('close', function() {
-            myLogger.debug("sip#makeWsTransport ws.on(close)");
             delete flows[flowid];
             if (optCallbacks.onClose) {
                 optCallbacks.onClose(flow);
@@ -672,13 +673,21 @@ function makeWsTransport(options, callback, optCallbacks) {
 
         ws.on('message', function(data) {
             var msg = parseMessage(data);
-            if(msg) {
-                callback(msg, {protocol: 'WS', address: remote.address, port: remote.port, local: local});
+            if (msg) {
+                callback(
+                    msg,
+                    {
+                        protocol: protocol,
+                        address: remote.address,
+                        port: remote.port,
+                        local: local
+                    }
+                );
             }
         });
     });
 
-    function get(flow, error) {
+    function get(flow, onError) {
         myLogger.debug("wsTranport#get");
         var ws = flows[[flow.address, flow.port, flow.local.address, flow.local.port].join()];
         if (ws) {
@@ -687,8 +696,12 @@ function makeWsTransport(options, callback, optCallbacks) {
                     ws.send(stringify(m));
                 },
                 release: function() {},
-                local: { protocol: 'WS', address: ws._socket.address().address, port: ws._socket.address().port },
-                protocol: 'WS'
+                protocol: protocol,
+                local: {
+                    protocol: protocol,
+                    address: ws._socket.address().address,
+                    port: ws._socket.address().port
+                },
             };
         }
         else {
@@ -707,6 +720,24 @@ function makeWsTransport(options, callback, optCallbacks) {
     };
 }
 
+function makeWsTransport(options, callback, optCallbacks) {
+    var wsServerInitObj = {port: options.ws_port};
+    return makeWsTransportInner('WS', wsServerInitObj, callback, optCallbacks);
+}
+
+function makeWssTransport(options, callback, optCallbacks) {
+    var dummyReqHandler = function(req, res) {
+        res.writeHead(404);
+        res.end();
+    };
+    var srv = https.createServer({
+        key: fs.readFileSync(options.ssl.key),
+        cert: fs.readFileSync(options.ssl.cert)
+    }, dummyReqHandler).listen(options.wss_port);
+
+    var wsServerInitObj = {server: srv};
+    return makeWsTransportInner('WSS', wsServerInitObj, callback, optCallbacks);
+}
 
 function makeUdpTransport(options, callback, optCallbacks) {
     function onMessage(data, rinfo) {
@@ -719,7 +750,18 @@ function makeUdpTransport(options, callback, optCallbacks) {
                     msg.headers.via[0].params.rport = rinfo.port;
             }
 
-            callback(msg, {protocol: 'UDP', address: rinfo.address, port: rinfo.port, local: {address: address, port: port}});
+            callback(
+                msg,
+                {
+                    protocol: 'UDP',
+                    address: rinfo.address,
+                    port: rinfo.port,
+                    local: {
+                        address: address,
+                        port: port
+                    }
+                }
+            );
         }
     }
 
@@ -736,7 +778,11 @@ function makeUdpTransport(options, callback, optCallbacks) {
                 socket.send(new Buffer(s, 'ascii'), 0, s.length, remote.port, remote.address);
             },
             protocol: 'UDP',
-            release : function() {}
+            release : function() {},
+            local: {
+                address: address,
+                port: port
+            }
         };
     }
 
@@ -770,35 +816,46 @@ function makeTransport(options, onMsgCallback, optCallbacks) {
     if (options.ws_port && WebSocket) {
         protocols.WS = makeWsTransport(options, onMsgCallbackWrap, optCallbacks);
     }
+    if (options.wss_port && WebSocket) {
+        protocols.WSS = makeWssTransport(options, onMsgCallbackWrap, optCallbacks);
+    }
 
-    function wrap(obj, target) {
-        return Object.create(obj, {send: {value: function(m) {
-            if(m.method) {
-                m.headers.via[0].host = options.publicAddress || options.address || options.hostname || os.hostname();
-                m.headers.via[0].port = options.port || defaultPort(this.protocol);
+    function wrap(transportObj, target) {
+        return Object.create(transportObj, {send: {value: function(m) {
+            if (m.method) {
+                //add "via" for this host
+                m.headers.via[0].host = options.publicAddress ||
+                                        options.address ||
+                                        options.hostname ||
+                                        os.hostname();
+                m.headers.via[0].port = transportObj.local.port;
                 m.headers.via[0].protocol = this.protocol;
 
-                if(this.protocol === 'UDP' && (!options.hasOwnProperty('rport') || options.rport)) {
+                if (this.protocol === 'UDP' &&
+                    (!options.hasOwnProperty('rport') || options.rport)
+                ) {
                     m.headers.via[0].params.rport = null;
                 }
             }
             options.logger && options.logger.send && options.logger.send(m, target);
-            obj.send(m);
+            transportObj.send(m);
         }}});
     }
 
     return {
         open: function(target, error) {
-            var transportObj = protocols[target.protocol.toUpperCase()].open(target, error);
+            var protocol = target.protocol.toUpperCase();
+            var transportObj = protocols[protocol].open(target, error);
             if (!transportObj) {
-                    throw new Error('transport not found');
+                throw new Error('transport not found');
             }
             return wrap(transportObj, target);
         },
         get: function(target, error) {
-            var transportObj = protocols[target.protocol.toUpperCase()].get(target, error);
+            var protocol = target.protocol.toUpperCase();
+            var transportObj = protocols[protocol].get(target, error);
             if (!transportObj) {
-                    throw new Error('transport not found');
+                throw new Error('transport not found');
             }
             return wrap(transportObj, target);
         },
@@ -1254,9 +1311,13 @@ function makeTransactionLayer(options, transport) {
 
 exports.makeTransactionLayer = makeTransactionLayer;
 
-function sequentialSearch(transaction, connect, addresses, rq, callback) {
+function sequentialSearch(transaction, transport, addresses, rq, callback) {
     myLogger.debug("sip#sequentialSearch");
-    if(rq.method !== 'CANCEL') {
+
+    var createClientTransactionFunc = transaction.createClientTransaction.bind(transaction);
+    var connectFunc = transport.open.bind(transport);
+
+    if (rq.method !== 'CANCEL') {
         if(!rq.headers.via) rq.headers.via = [];
         rq.headers.via.unshift({params:{}});
     }
@@ -1268,8 +1329,8 @@ function sequentialSearch(transaction, connect, addresses, rq, callback) {
         if (addresses.length > 0) {
             try {
                 var address = addresses.shift();
-                var client = transaction(
-                    connect(
+                var client = createClientTransactionFunc(
+                    connectFunc(
                         address,
                         function() { client.message(makeResponse(rq, 503, 'Service Unavailable'));}
                     ),
@@ -1405,8 +1466,8 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                     }
                     else {
                         sequentialSearch(
-                            transaction.createClientTransaction.bind(transaction),
-                            transport.open.bind(transport),
+                            transaction,
+                            transport,
                             addresses,
                             m,
                             callback || function(){}
@@ -1427,7 +1488,11 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                 //text message, the src ws connection, and the dest ws
                 //connection can't be torn apart.
                 else if (msgPath) {
-                    var protocol = hop.params.transport || 'UDP';
+                    if (!hop.params.transport) {
+                        throw new Error('sip#exports.send transport not found');
+                    }
+
+                    var protocol = hop.params.transport;
                     var addresses = [{
                         protocol: protocol,
                         address: msgPath.dstFlow.address,
