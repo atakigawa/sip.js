@@ -1422,7 +1422,16 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
             //responding to client
             if (m.method === undefined) {
                 var t = transaction.getServer(m);
-                t && t.send && t.send(m);
+                if (t && t.send) {
+                    try {
+                        t.send(m);
+                    }
+                    catch(e) {
+                        errorLog(e);
+                    }
+                    finally {
+                    }
+                }
             }
             //forwarding request from client
             else {
