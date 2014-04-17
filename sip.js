@@ -822,6 +822,7 @@ function makeTransport(options, onMsgCallback, optCallbacks) {
 
     function wrap(transportObj, target) {
         return Object.create(transportObj, {send: {value: function(m) {
+            //do the wrap
             if (m.method) {
                 //add "via" for this host
                 m.headers.via[0].host = options.publicAddress ||
@@ -837,8 +838,19 @@ function makeTransport(options, onMsgCallback, optCallbacks) {
                     m.headers.via[0].params.rport = null;
                 }
             }
-            options.logger && options.logger.send && options.logger.send(m, target);
-            transportObj.send(m);
+
+            //log
+            var logSend = (options.logger && options.logger.send) || function() {};
+            logSend(m, target);
+
+            //send
+            try {
+                transportObj.send(m);
+            }
+            catch (e) {
+                var errorLog = (options.logger && options.logger.error) || function() {};
+                errorLog(e);
+            }
         }}});
     }
 
@@ -1492,8 +1504,6 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                     }
                 };
 
-                myLogger.debug("hop = ");
-                myLogger.debug(util.inspect(hop));
                 if (hop.host === hostname) {
                     var flow = decodeFlowToken(hop.user);
                     _send(flow ? [flow] : []);
@@ -1504,6 +1514,9 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                 //at the text message, but when websocket comes in, the
                 //text message, the src ws connection, and the dest ws
                 //connection can't be torn apart.
+                //
+                //thought so but actually the encoded flow is included in the
+                //sip dialog. the IF clause alone should be enough to handle everything...?
                 else if (msgPath) {
                     if (!hop.params.transport) {
                         throw new Error('sip#exports.send transport not found');
