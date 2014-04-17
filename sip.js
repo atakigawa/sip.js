@@ -1409,11 +1409,19 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
 
     function decodeFlowToken(token) {
         var s = (new Buffer(token, 'base64')).toString('ascii').split(',');
-        if(s.length != 6) return;
+        if (s.length != 6) return;
 
-        var flow = {protocol: s[1], address: s[2], port: +s[3], local: {address: s[4], port: +s[5]}};
+        var h = crypto.createHmac('sha1', rbytes);
+        h.update([s[1], s[2], s[3], s[4], s[5]].join());
 
-        return encodeFlowToken(flow) == token ? flow : undefined;
+        var flow = {
+            protocol: s[1],
+            address: s[2],
+            port: +s[3],
+            local: {address: s[4], port: +s[5]}
+        };
+
+        return h.digest('base64') === s[0] ? flow : undefined;
     }
 
     return {
