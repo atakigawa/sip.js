@@ -752,7 +752,7 @@ function makeUdpTransport(options, callback, optCallbacks) {
                 address: rInfo.address,
                 port: rInfo.port,
                 local: {
-                    address: bindAddress,
+                    address: options.publicAddress,
                     port: bindPort
                 }
             };
@@ -1420,10 +1420,10 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
 
     function decodeFlowToken(token) {
         var s = (new Buffer(token, 'base64')).toString('ascii').split(',');
-        if (s.length != 6) return;
+        if (s.length != 6) return undefined;
 
         var h = crypto.createHmac('sha1', rbytes);
-        h.update([s[1], s[2], s[3], s[4], s[5]].join());
+        h.update([s[1], s[2], +s[3], s[4], +s[5]].join());
 
         var flow = {
             protocol: s[1],
@@ -1455,6 +1455,7 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
             //forwarding request from client
             else {
                 var hop = parseUri(m.uri);
+                var isHopTakenFromRoute = false;
 
                 if (typeof m.headers.route === 'string') {
                     m.headers.route = parsers.route({s: m.headers.route, i:0});
@@ -1462,6 +1463,19 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
 
                 if (m.headers.route && m.headers.route.length > 0) {
                     hop = parseUri(m.headers.route[0].uri);
+                    isHopTakenFromRoute = true;
+                    /*
+                      TODO:
+                      strictly speaking, IF clause should only be true when
+                      hop.host === hostname
+                      AND (
+                        isNaN(hop.port)
+                        OR
+                        portIsAssociatedWithThisProxy(hop.port, protocol, options)
+                      ).
+                      The implementation of portisassociatedwiththisproxy() should
+                      be trivial. But where should we get the protocol from?
+                     */
                     if (hop.host === hostname) {
                         m.headers.route.shift();
                     }
@@ -1503,27 +1517,13 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                     }
                 };
 
-                if (hop.host === hostname) {
+                if (isHopTakenFromRoute) {
                     var flow = decodeFlowToken(hop.user);
                     _send(flow ? [flow] : []);
                 }
-                //for websocket transport, we always need the ws connection
-                //info for both requester and requestee. The ideal for sip
-                //is to be able to know all information from just looking
-                //at the text message, but when websocket comes in, the
-                //text message, the src ws connection, and the dest ws
-                //connection can't be torn apart.
-                //
-                //thought so but actually the encoded flow is included in the
-                //sip dialog. the IF clause alone should be enough to handle everything...?
                 else if (msgPath) {
-                    if (!hop.params.transport) {
-                        throw new Error('sip#exports.send transport not found');
-                    }
-
-                    var protocol = hop.params.transport;
                     var addresses = [{
-                        protocol: protocol,
+                        protocol: msgPath.dstFlow.protocol,
                         address: msgPath.dstFlow.address,
                         port: msgPath.dstFlow.port,
                         local: {
