@@ -105,7 +105,7 @@ function parseGenericHeader(d, h) {
 }
 
 function parseAOR(data) {
-    var r = applyRegex(/((?:[\w\-.!%*_+`'~]+)(?:\s+[\w\-.!%*_+`'~]+)*|"[^"\\]*(?:\\.[^"\\]*)*")?\s*\<\s*([^>]*)\s*\>|((?:[^\s@"<]@)?[^\s;]+)/g, data);
+    var r = applyRegex(/((?:[\w\-.!%*_+`'~]+)(?:\s+[\w\-.!%*_+`'~]+)*|"[^"\\]*(?:\\.[^"\\]*)*")?\s*<\s*([^>]*)\s*>|((?:[^\s@"<]@)?[^\s;]+)/g, data);
 
     return parseParams(data, {name: r[1], uri: r[2] || r[3] || ''});
 }
@@ -512,32 +512,33 @@ function makeStreamTransport(protocol, connect, createServer, callback, optCallb
 
     function init(stream, remote) {
         var remoteid = [remote.address, remote.port].join(),
-            flowid,
+            flow = {
+                protocol: protocol,
+                address: stream.remoteAddress,
+                port: stream.remotePort,
+                local: {
+                    address: stream.localAddress,
+                    port: stream.localPort
+                }
+            },
             refs = 0;
 
         stream.setEncoding('ascii');
         stream.on('data', makeStreamParser(function(m) {
-            if(checkMessage(m)) {
-                if(m.method) m.headers.via[0].params.received = remote.address;
-                callback(
-                    m,
-                    {
-                        protocol: remote.protocol,
-                        address: stream.remoteAddress,
-                        port: stream.remotePort,
-                        local: {
-                            address: stream.localAddress,
-                            port: stream.localPort
-                        }
-                    },
-                    stream
-                );
+            if (checkMessage(m)) {
+                if (m.method) {
+                    m.headers.via[0].params.received = remote.address;
+                }
+                callback(m, flow, stream);
             }
         }));
 
         stream.on('close',    function() {
             //if(flowid) delete flows[id];
             delete remotes[remoteid];
+            if (optCallbacks.onClose) {
+                optCallbacks.onClose(flow);
+            }
         });
         stream.on('connect', function() {
             //flowid = [remoteid,stream.localAddress, stream.localPort].join();
@@ -616,8 +617,12 @@ function makeTlsTransport(options, callback, optCallbacks) {
             return tls.connect(port, host, options.tls, callback);
         },
         function(callback) {
-            var server = tls.createServer(options.tls, callback);
-            server.listen(options.tls_port || 5061, options.address);
+            var initObj = {
+                key: fs.readFileSync(options.ssl.key),
+                cert: fs.readFileSync(options.ssl.cert)
+            };
+            var server = tls.createServer(initObj, callback);
+            server.listen(options.tls_port, options.bindAddress);
             return server;
         },
         callback,
@@ -632,7 +637,7 @@ function makeTcpTransport(options, callback, optCallbacks) {
         },
         function(callback) {
             var server = net.createServer(callback);
-            server.listen(options.port || 5060, options.address);
+            server.listen(options.udp_tcp_port, options.bindAddress);
             return server;
         },
         callback,
@@ -653,6 +658,7 @@ function makeWsTransportInner(protocol, wsServerInitObj, callback, optCallbacks)
                 port: ws._socket.address().port
             },
             flow = {
+                protocol: protocol,
                 address: remote.address,
                 port: remote.port,
                 local: {
@@ -673,16 +679,8 @@ function makeWsTransportInner(protocol, wsServerInitObj, callback, optCallbacks)
 
         ws.on('message', function(data) {
             var msg = parseMessage(data);
-            if (msg) {
-                callback(
-                    msg,
-                    {
-                        protocol: protocol,
-                        address: remote.address,
-                        port: remote.port,
-                        local: local
-                    }
-                );
+            if (msg && checkMessage(msg)) {
+                callback(msg, flow);
             }
         });
     });
@@ -721,7 +719,10 @@ function makeWsTransportInner(protocol, wsServerInitObj, callback, optCallbacks)
 }
 
 function makeWsTransport(options, callback, optCallbacks) {
-    var wsServerInitObj = {port: options.ws_port};
+    var wsServerInitObj = {
+        port: options.ws_port,
+        host: options.bindAddress
+    };
     return makeWsTransportInner('WS', wsServerInitObj, callback, optCallbacks);
 }
 
@@ -733,43 +734,42 @@ function makeWssTransport(options, callback, optCallbacks) {
     var srv = https.createServer({
         key: fs.readFileSync(options.ssl.key),
         cert: fs.readFileSync(options.ssl.cert)
-    }, dummyReqHandler).listen(options.wss_port);
+    }, dummyReqHandler).listen(options.wss_port, options.bindAddress);
 
     var wsServerInitObj = {server: srv};
     return makeWsTransportInner('WSS', wsServerInitObj, callback, optCallbacks);
 }
 
 function makeUdpTransport(options, callback, optCallbacks) {
-    function onMessage(data, rinfo) {
-        var msg = parseMessage(data);
+    var bindAddress = options.bindAddress;
+    var bindPort = options.udp_tcp_port;
 
-        if(msg && checkMessage(msg)) {
-            if(msg.method) {
-                msg.headers.via[0].params.received = rinfo.address;
-                if(msg.headers.via[0].params.hasOwnProperty('rport'))
-                    msg.headers.via[0].params.rport = rinfo.port;
-            }
-
-            callback(
-                msg,
-                {
-                    protocol: 'UDP',
-                    address: rinfo.address,
-                    port: rinfo.port,
-                    local: {
-                        address: address,
-                        port: port
-                    }
+    function onMessage(data, rInfo) {
+        myLogger.debug("sip#makeUdpTransport onMessage");
+        var msg = parseMessage(data),
+            flow = {
+                protocol: 'UDP',
+                address: rInfo.address,
+                port: rInfo.port,
+                local: {
+                    address: bindAddress,
+                    port: bindPort
                 }
-            );
+            };
+
+        if (msg && checkMessage(msg)) {
+            if (msg.method) {
+                msg.headers.via[0].params.received = rInfo.address;
+                if (msg.headers.via[0].params.hasOwnProperty('rport')) {
+                    msg.headers.via[0].params.rport = rInfo.port;
+                }
+            }
+            callback(msg, flow);
         }
     }
 
-    var address = options.address || '0.0.0.0';
-    var port = options.port || 5060;
-
-    var socket = dgram.createSocket(net.isIPv6(address) ? 'udp6' : 'udp4', onMessage);
-    socket.bind(port, address);
+    var socket = dgram.createSocket(net.isIPv6(bindAddress) ? 'udp6' : 'udp4', onMessage);
+    socket.bind(bindPort, bindAddress);
 
     function open(remote, error) {
         return {
@@ -780,8 +780,8 @@ function makeUdpTransport(options, callback, optCallbacks) {
             protocol: 'UDP',
             release : function() {},
             local: {
-                address: address,
-                port: port
+                address: bindAddress,
+                port: bindPort
             }
         };
     }
@@ -826,7 +826,6 @@ function makeTransport(options, onMsgCallback, optCallbacks) {
             if (m.method) {
                 //add "via" for this host
                 m.headers.via[0].host = options.publicAddress ||
-                                        options.address ||
                                         options.hostname ||
                                         os.hostname();
                 m.headers.via[0].port = transportObj.local.port;
@@ -1408,7 +1407,7 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
     }, optCallbacks);
 
     var transaction = makeTransactionLayer(options, transport.open.bind(transport));
-    var hostname = options.publicAddress || options.address || options.hostname || os.hostname();
+    var hostname = options.publicAddress || options.hostname || os.hostname();
     //see http://tools.ietf.org/html/draft-ietf-sip-outbound-16#section-5.2
     var rbytes = crypto.randomBytes(20);
 
