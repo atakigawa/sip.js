@@ -25,32 +25,7 @@ function defaultCallback(rs) {
     exports.send(rs);
 }
 
-exports.send = function(msg, msgPath, callback) {
-    myLogger.debug("proxy#send");
-    var ctx = contexts[makeContextId(msg)];
-
-    if (!ctx) {
-        sip.send.apply(sip, arguments);
-        return;
-    }
-
-    return msg.method ?
-        forwardRequest(ctx, msg, msgPath, callback || defaultCallback) :
-        forwardResponse(ctx, msg, msgPath);
-};
-
-
-function forwardResponse(ctx, rs, rsPath, callback) {
-    myLogger.debug("proxy#forwardResponse");
-    if (+rs.status >= 200) {
-        delete contexts[makeContextId(rs)];
-    }
-
-    sip.send(rs);
-}
-
-
-function sendCancel(rq, rqPath, via, route) {
+function defaultSendCancel(rq, rqPath, via, route) {
     sip.send({
         method: 'CANCEL',
         uri: rq.uri,
@@ -65,8 +40,34 @@ function sendCancel(rq, rqPath, via, route) {
     }, rqPath);
 }
 
+exports.send = function(msg, msgPath, callback, onCancel) {
+    myLogger.debug("proxy#send");
+    var ctx = contexts[makeContextId(msg)];
 
-function forwardRequest(ctx, rq, rqPath, callback) {
+    if (!ctx) {
+        sip.send.apply(sip, arguments);
+        return;
+    }
+
+    return msg.method ?
+        forwardRequest(ctx, msg, msgPath,
+                callback || defaultCallback,
+                onCancel || defaultSendCancel) :
+        forwardResponse(ctx, msg, msgPath);
+};
+
+
+function forwardResponse(ctx, rs, rsPath, callback) {
+    myLogger.debug("proxy#forwardResponse");
+    if (+rs.status >= 200) {
+        delete contexts[makeContextId(rs)];
+    }
+
+    sip.send(rs);
+}
+
+
+function forwardRequest(ctx, rq, rqPath, callback, onCancel) {
     myLogger.debug("proxy#forwardRequest");
     var route = rq.headers.route && rq.headers.route.slice();
 
@@ -75,11 +76,11 @@ function forwardRequest(ctx, rq, rqPath, callback) {
         if (+rs.status < 200) {
             var via = rs.headers.via[0];
             ctx.cancellers[rs.headers.via[0].params.branch] = function() {
-                sendCancel(rq, rqPath, via, route);
+                onCancel(rq, rqPath, via, route);
             };
 
             if (ctx.cancelled) {
-                sendCancel(rq, rqPath, via, route);
+                onCancel(rq, rqPath, via, route);
             }
         }
         else {
