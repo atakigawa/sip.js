@@ -576,7 +576,7 @@ function makeStreamTransport(protocol, connect, createServer, callback, optCallb
             };
         };
 
-        return remotes[id];
+        return remotes[remoteid];
     }
 
     var server = createServer(function(stream) {
