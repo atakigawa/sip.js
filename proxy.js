@@ -1,4 +1,4 @@
-var sip=require('sip');
+var sip=require('./sip');
 var util=require('util');
 
 var log4js = require('log4js');
