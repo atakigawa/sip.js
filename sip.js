@@ -1084,6 +1084,7 @@ function createInviteServerTransaction(transport, cleanup) {
 }
 
 function createServerTransaction(transport, cleanup) {
+    myLogger.debug("createServerTransaction");
     var sm = makeSM();
     var rs;
 
@@ -1203,6 +1204,7 @@ function createInviteClientTransaction(rq, transport, tu, cleanup, options) {
 }
 
 function createClientTransaction(rq, transport, tu, cleanup) {
+    myLogger.debug("createClientTransaction");
     assert.ok(rq.method !== 'INVITE');
 
     var sm = makeSM();
@@ -1269,7 +1271,7 @@ function makeTransactionLayer(options, transport) {
 
     return {
         createServerTransaction: function(rq, cn) {
-            myLogger.debug("createServerTransaction");
+            myLogger.debug("makeTransactionLayer#createServerTransaction");
             var id = makeTransactionId(rq);
 
             server_transactions[id] = (rq.method === 'INVITE' ? createInviteServerTransaction : createServerTransaction)(
@@ -1282,7 +1284,7 @@ function makeTransactionLayer(options, transport) {
             return server_transactions[id];
         },
         createClientTransaction: function(connection, rq, callback) {
-            myLogger.debug("createClientTransaction");
+            myLogger.debug("makeTransactionLayer#createClientTransaction");
             if (rq.method !== 'CANCEL') {
                 rq.headers.via[0].params.branch = generateBranch();
             }
