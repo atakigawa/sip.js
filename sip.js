@@ -703,10 +703,9 @@ function makeWsTransportInner(protocol, wsServerInitObj, callback, optCallbacks)
             };
         }
         else {
-            var lgr = log4js.getLogger("sip_core_error");
-            lgr.error("wsTransport#get ws not is there");
-            lgr.error("wsTransport#get flows = " + debug(flows) );
-            lgr.error("wsTransport#get flow = " + debug(flow) );
+            myLogger.error("wsTransport#get ws not is there");
+            myLogger.error("wsTransport#get flows = " + debug(flows) );
+            myLogger.error("wsTransport#get flow = " + debug(flow) );
             return null;
         }
     }
@@ -1043,6 +1042,10 @@ function createInviteServerTransaction(transport, cleanup) {
     var completed = {
         enter: function () {
             g = setTimeout(function retry(t) {
+                myLogger.info(
+                    "createInviteServerTransaction - state completed - " +
+                    "retry - " + t
+                );
                 g = setTimeout(retry, t*2, t*2);
                 transport(rs);
             }, 500, 500);
@@ -1120,8 +1123,12 @@ function createInviteClientTransaction(rq, transport, tu, cleanup, options) {
         enter: function() {
             transport(rq);
 
-            if(!transport.reliable) {
+            if (!transport.reliable) {
                 a = setTimeout(function resend(t) {
+                    myLogger.info(
+                        "createInviteClientTransaction - state calling - " +
+                        "retry - " + t
+                    );
                     transport(rq);
                     a = setTimeout(resend, t*2, t*2);
                 }, 500, 500);
@@ -1131,6 +1138,10 @@ function createInviteClientTransaction(rq, transport, tu, cleanup, options) {
                 tu(makeResponse(rq, 503, 'Service Unavailable'));
                 sm.enter(terminated);
             }, 32000);
+
+            if (options && options.inviteCallingCallback) {
+                options.inviteCallingCallback(rq);
+            }
         },
         leave: function() {
             clearTimeout(a);
@@ -1177,6 +1188,9 @@ function createInviteClientTransaction(rq, transport, tu, cleanup, options) {
             ack.headers.to=rs.headers.to;
             transport(ack);
             d = setTimeout(sm.enter.bind(sm, terminated), 32000);
+            if (options && options.inviteCompletedCallback) {
+                options.inviteCompletedCallback(rq, rs);
+            }
         },
         leave: function() { clearTimeout(d); },
         message: function(message, remote) {
@@ -1188,6 +1202,9 @@ function createInviteClientTransaction(rq, transport, tu, cleanup, options) {
     var accepted = {
         enter: function() {
             timer_m = setTimeout(function() { sm.enter(terminated); }, 32000);
+            if (options && options.inviteAcceptedCallback) {
+                options.inviteAcceptedCallback(rq);
+            }
         },
         leave: function() { clearTimeout(timer_m); },
         message: function(m) {
@@ -1213,8 +1230,15 @@ function createClientTransaction(rq, transport, tu, cleanup) {
     var trying = {
         enter: function() {
             transport(rq);
-            if(!transport.reliable)
-                e = setTimeout(function() { sm.signal('timerE', 500); }, 500);
+            if (!transport.reliable) {
+                e = setTimeout(function() {
+                    myLogger.info(
+                        "createClientTransaction - state trying - " +
+                        "retry - 500"
+                    );
+                    sm.signal('timerE', 500);
+                }, 500);
+            }
             f = setTimeout(function() { sm.signal('timerF'); }, 32000);
         },
         leave: function() {
@@ -1391,6 +1415,8 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                     try {
                         onMsgCallback(m,remote);
                     } catch(e) {
+                        myLogger.error("transport - Internal Server Error");
+                        myLogger.error(util.inspect(m, {depth:null}));
                         t.send(makeResponse(m, '500', 'Internal Server Error'));
                         throw e;
                     }
@@ -1400,7 +1426,9 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                 }
             }
             else {
-                t.message && t.message(m, remote);
+                if (t.message) {
+                    t.message(m, remote);
+                }
             }
         }
         catch(e) {
