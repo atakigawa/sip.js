@@ -912,12 +912,18 @@ var resolveSrv = makeWellBehavingResolver(dns.resolveSrv);
 var resolve4 = makeWellBehavingResolver(dns.resolve4);
 var resolve6 = makeWellBehavingResolver(dns.resolve6);
 
-function resolve(uri, callback) {
+function resolve(uri, callback, myHostname) {
     myLogger.debug("sip#resolve");
     myLogger.debug(util.inspect(uri));
     if (net.isIP(uri.host)) {
-        var protocol = uri.params.transport || 'UDP';
-        return callback([{protocol: protocol, address: uri.host, port: uri.port || defaultPort(protocol)}]);
+        //prevent from sending to myself
+        if (uri.host === myHostname) {
+            return callback([]);
+        }
+        else {
+            var protocol = uri.params.transport || 'UDP';
+            return callback([{protocol: protocol, address: uri.host, port: uri.port || defaultPort(protocol)}]);
+        }
     }
 
     function resolve46(host, cb) {
@@ -931,8 +937,9 @@ function resolve(uri, callback) {
         });
     }
 
+    var protocols = [];
     if (uri.port) {
-        var protocols = uri.params.protocol ? [uri.params.protocol] : ['UDP', 'TCP', 'TLS'];
+        protocols = uri.params.protocol ? [uri.params.protocol] : ['UDP', 'TCP', 'TLS'];
 
         resolve46(uri.host, function(err, address) {
             address = (address || []).map(function(x) {
@@ -950,7 +957,7 @@ function resolve(uri, callback) {
         });
     }
     else {
-        var protocols = uri.params.protocol ? [uri.params.protocol] : ['tcp', 'udp', 'tls'];
+        protocols = uri.params.protocol ? [uri.params.protocol] : ['tcp', 'udp', 'tls'];
 
         var n = protocols.length;
         var addresses = [];
@@ -1565,7 +1572,7 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                 }
                 //this only cares about the remote destination.
                 else {
-                    resolve(hop, _send);
+                    resolve(hop, _send, hostname);
                 }
             }
         },
