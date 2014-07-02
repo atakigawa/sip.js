@@ -512,13 +512,18 @@ function makeStreamTransport(protocol, connect, createServer, callback, optCallb
 
     function init(stream, remote) {
         var remoteid = [remote.address, remote.port].join(),
+
+            //a bit different between tcp and tls
+            localAddr = stream.localAddress || stream.address().address,
+            localPort = stream.localPort || stream.address().port,
+
             flow = {
                 protocol: protocol,
                 address: stream.remoteAddress,
                 port: stream.remotePort,
                 local: {
-                    address: stream.localAddress,
-                    port: stream.localPort
+                    address: localAddr,
+                    port: localPort
                 }
             },
             refs = 0;
