@@ -1577,7 +1577,23 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
             }
         },
         encodeFlowUri: function(flow) {
-            return {schema: flow.protocol === 'TLS' ? 'sips' : 'sip', user: encodeFlowToken(flow), host: hostname, params:{}};
+            var protocol = flow.protocol.toUpperCase(),
+                schema = protocol === 'TLS' ? 'sips' : 'sip',
+                params = {};
+
+            if (protocol === 'TLS') {
+                params.transport = 'tls';
+            }
+            else if (protocol === 'TCP') {
+                params.transport = 'tcp';
+            }
+
+            return {
+                schema: schema,
+                user: encodeFlowToken(flow),
+                host: hostname,
+                params: params
+            };
         },
         decodeFlowUri: function(uri) {
             uri = parseUri(uri);
