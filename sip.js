@@ -558,7 +558,8 @@ function makeStreamTransport(protocol, connect, createServer, callback, optCallb
         });
 
         stream.on('timeout',  function() { if(refs === 0) stream.end(); });
-        stream.setTimeout(120000);
+        stream.setTimeout(120 * 1000);
+        stream.setKeepAlive(true, 20 * 1000);
         stream.setMaxListeners(10000);
 
         remotes[remoteid] = function(onError) {
