@@ -1,6 +1,6 @@
 var crypto = require('crypto');
 var util = require('util');
-var stringifyUri = require('./sip').stringifyUri; 
+var stringifyUri = require('./sip').stringifyUri;
 
 function unq(a) {
   if(a && a[0] === '"' && a[a.length-1] === '"')
@@ -43,7 +43,7 @@ function calculateHA1(ctx) {
   var userhash = ctx.userhash || calculateUserRealmPasswordHash(ctx.user, ctx.realm, ctx.password);
   if(ctx.algorithm === 'md5-sess') return kd(userhash, ctx.nonce, ctx.cnonce);
 
-  return userhash; 
+  return userhash;
 }
 exports.calculateHA1 = calculateHA1;
 
@@ -73,7 +73,7 @@ function extractNonceTimestamp(nonce, tag) {
 
   var ts = new Date(v[0]);
 
-  return generateNonce(tag, ts) === nonce && ts;
+  return generateNonce(tag, ts) === nonce ? ts : "";
 }
 exports.extractNonceTimestamp = extractNonceTimestamp;
 
@@ -95,7 +95,7 @@ function selectQop(challenge, preference) {
   if(!preference)
     return challenge[0];
 
-  if(typeof(preference) === 'string') 
+  if(typeof(preference) === 'string')
     preference = preference.split(',');
 
   for(var i = 0; i !== preference.length; ++i)
@@ -109,8 +109,11 @@ function selectQop(challenge, preference) {
 exports.challenge = function(ctx, rs) {
   ctx.proxy = rs.status === 407;
 
-  ctx.nonce = ctx.cnonce || rbytes();
+  //never reuse nonce
+  //maybe nice to have an option to reuse it for some interval
+  ctx.nonce = generateNonce('sip.digest.nonce');
   ctx.nc = 0;
+
   ctx.qop = ctx.qop || 'auth,auth-int';
   ctx.algorithm = ctx.algorithm || 'md5';
 
@@ -121,14 +124,14 @@ exports.challenge = function(ctx, rs) {
       scheme: 'Digest',
       realm: q(ctx.realm),
       qop: q(ctx.qop),
-      algorithm: q(ctx.algoritm),
+      algorithm: q(ctx.algorithm),
       nonce: q(ctx.nonce),
       opaque: q(ctx.opaque)
     }
   );
 
   return rs;
-}
+};
 
 exports.authenticateRequest = function(ctx, rq, creds) {
   var response = findDigestRealm(rq.headers[ctx.proxy ? 'proxy-authorization': 'authorization'], ctx.realm);
@@ -140,25 +143,36 @@ exports.authenticateRequest = function(ctx, rq, creds) {
   var qop = unq(lowercase(response.qop));
 
   ctx.nc = (ctx.nc || 0) +1;
-  
+
   if(!ctx.ha1) {
     ctx.userhash = creds.hash || calculateUserRealmPasswordHash(creds.user, ctx.realm, creds.password);
     ctx.ha1 = ctx.userhash;
-    if(ctx.algoritm === 'md5-sess')
+    if(ctx.algorithm === 'md5-sess')
       ctx.ha1 = kd(ctx.userhash, ctx.nonce, cnonce);
+
   }
-  
-  var digest = calculateDigest({ha1:ctx.ha1, method:rq.method, nonce:ctx.nonce, nc:numberTo8Hex(ctx.nc), cnonce:cnonce, qop:qop, uri:uri, entity:rq.content});
-  if(digest === unq(response.response)) {
+
+  var digest = calculateDigest({
+      ha1: ctx.ha1,
+      method: rq.method,
+      nonce: ctx.nonce,
+      nc: numberTo8Hex(ctx.nc),
+      cnonce: cnonce,
+      qop: qop,
+      uri: uri,
+      entity: rq.content
+  });
+
+  if (digest === unq(response.response)) {
     ctx.cnonce = cnonce;
     ctx.uri = uri;
     ctx.qop = qop;
 
     return true;
-  } 
+  }
 
   return false;
-}
+};
 
 exports.signResponse = function(ctx, rs) {
   var nc = numberTo8Hex(ctx.nc);
@@ -169,7 +183,7 @@ exports.signResponse = function(ctx, rs) {
     rspauth: q(calculateDigest({ha1:ctx.ha1, method:'', nonce:ctx.nonce, nc:nc, cnonce:ctx.cnonce, qop:ctx.qop, uri:ctx.uri, entity:rs.content}))
   };
   return rs;
-}
+};
 
 function initClientContext(ctx, rs, creds) {
   var challenge;
@@ -178,18 +192,20 @@ function initClientContext(ctx, rs, creds) {
     ctx.proxy = true;
     challenge = findDigestRealm(rs.headers['proxy-authenticate'], creds.realm);
   }
-  else
+  else {
+    ctx.proxy = false;
     challenge = findDigestRealm(rs.headers['www-authenticate'], creds.realm);
-  
+  }
+
   if(ctx.nonce !== unq(challenge.nonce)) {
     ctx.nonce = unq(challenge.nonce);
 
     ctx.algorithm = unq(lowercase(challenge.algorithm));
     ctx.qop = selectQop(lowercase(challenge.qop), ctx.qop);
- 
+
     if(ctx.qop) {
+      ctx.nonce = generateNonce('sip.digest.nonce');
       ctx.nc = 0;
-      ctx.cnonce = rbytes();
     }
 
     ctx.realm = unq(challenge.realm);
@@ -213,28 +229,28 @@ exports.signRequest = function (ctx, rq, rs, creds) {
   var nc = ctx.nc !== undefined ? numberTo8Hex(++ctx.nc) : undefined;
 
   ctx.uri = stringifyUri(rq.uri);
-  
+
   var signature = {
     scheme: 'Digest',
     realm: q(ctx.realm),
     username: q(ctx.user),
-    nonce: q(ctx.nonce), 
+    nonce: q(ctx.nonce),
     uri: q(ctx.uri),
     nc: nc,
     algorithm: q(ctx.algorithm),
     cnonce: q(ctx.cnonce),
     qop: ctx.qop,
     opaque: q(ctx.opaque),
-    response: q(calculateDigest({ha1:ctx.ha1, method:rq.method, nonce:ctx.nonce, nc:nc, cnonce:ctx.cnonce, qop:ctx.qop, uri:ctx.uri, entity:rq.content}))    
+    response: q(calculateDigest({ha1:ctx.ha1, method:rq.method, nonce:ctx.nonce, nc:nc, cnonce:ctx.cnonce, qop:ctx.qop, uri:ctx.uri, entity:rq.content}))
   };
 
-  var hname = ctx.proxy ? 'proxy-authorization' : 'authorization'; 
- 
+  var hname = ctx.proxy ? 'proxy-authorization' : 'authorization';
+
   rq.headers[hname] = (rq.headers[hname] || []).filter(function(x) { return unq(x.realm) !== ctx.realm; });
   rq.headers[hname].push(signature);
 
   return rq;
-}
+};
 
 exports.authenticateResponse = function(ctx, rs) {
   var signature = rs.headers[ctx.proxy ? 'proxy-authentication-info' : 'authentication-info'];
@@ -248,14 +264,14 @@ exports.authenticateResponse = function(ctx, rs) {
       ctx.nonce = nextnonce;
       ctx.nc = 0;
 
-      if(ctx.algorithm === 'md5-sess') 
+      if(ctx.algorithm === 'md5-sess')
         ctx.ha1 = kd(ctx.userhash, ctx.nonce, ctx.cnonce);
     }
 
     return true;
   }
- 
+
   return false;
-}
+};
 
 
