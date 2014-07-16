@@ -1,9 +1,14 @@
 var sip=require('./sip');
 var util=require('util');
 
-var log4js = require('log4js');
-log4js.configure('log4js_config.json');
-var myLogger = log4js.getLogger("sip_proxy");
+var myLogger = {
+    trace: function() {},
+    debug: function() {},
+    info: function() {},
+    warn: function() {},
+    error: function() {},
+    fatal: function() {},
+};
 
 //holds canceller method info for each req/res pair
 var contexts = {};
@@ -123,6 +128,10 @@ function onCancelRequest(rq, flow) {
 }
 
 exports.start = function(options, onRequestCallback, optCallbacks) {
+    if (options.proxyLogger) {
+        myLogger = options.proxyLogger;
+    }
+
     sip.start(
         options,
         function(rq, flow) {

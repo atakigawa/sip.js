@@ -9,9 +9,14 @@ var fs = require('fs');
 var os = require('os');
 var crypto = require('crypto');
 
-var log4js = require('log4js');
-log4js.configure('log4js_config.json');
-var myLogger = log4js.getLogger("sip_core");
+var myLogger = {
+    trace: function() {},
+    debug: function() {},
+    info: function() {},
+    warn: function() {},
+    error: function() {},
+    fatal: function() {},
+};
 
 try {
     var WebSocket = require('ws');
@@ -1055,10 +1060,6 @@ function createInviteServerTransaction(transport, cleanup) {
     var completed = {
         enter: function () {
             g = setTimeout(function retry(t) {
-                myLogger.info(
-                    "createInviteServerTransaction - state completed - " +
-                    "retry - " + t
-                );
                 g = setTimeout(retry, t*2, t*2);
                 transport(rs);
             }, 500, 500);
@@ -1138,10 +1139,6 @@ function createInviteClientTransaction(rq, transport, tu, cleanup, options) {
 
             if (!transport.reliable) {
                 a = setTimeout(function resend(t) {
-                    myLogger.info(
-                        "createInviteClientTransaction - state calling - " +
-                        "retry - " + t
-                    );
                     transport(rq);
                     a = setTimeout(resend, t*2, t*2);
                 }, 500, 500);
@@ -1245,10 +1242,6 @@ function createClientTransaction(rq, transport, tu, cleanup) {
             transport(rq);
             if (!transport.reliable) {
                 e = setTimeout(function() {
-                    myLogger.info(
-                        "createClientTransaction - state trying - " +
-                        "retry - 500"
-                    );
                     sm.signal('timerE', 500);
                 }, 500);
             }
@@ -1617,6 +1610,10 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
 };
 
 exports.start = function(options, onMsgCallback, optCallbacks) {
+    if (options.sipCoreLogger) {
+        myLogger = options.sipCoreLogger;
+    }
+
     var r = exports.create(options, onMsgCallback, optCallbacks);
 
     exports.send = r.send;
