@@ -1591,6 +1591,7 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
                 schema: schema,
                 user: encodeFlowToken(flow),
                 host: hostname,
+                port: flow.local.port,
                 params: params
             };
         },
