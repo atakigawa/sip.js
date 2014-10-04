@@ -1577,7 +1577,7 @@ exports.create = function(options, onMsgCallback, optCallbacks) {
         },
         encodeFlowUri: function(flow) {
             var protocol = flow.protocol.toUpperCase(),
-                schema = ['TLS', 'WSS'].indexOf(protocol) != -1 ? 'sips' : 'sip',
+                schema = 'sip',
                 params = {};
 
             if (protocol === 'TLS') {
