@@ -741,7 +741,8 @@ function makeWssTransport(options, callback, optCallbacks) {
     };
     var srv = https.createServer({
         key: fs.readFileSync(options.ssl.key),
-        cert: fs.readFileSync(options.ssl.cert)
+        cert: fs.readFileSync(options.ssl.cert),
+        honorCipherOrder: true
     }, dummyReqHandler).listen(options.wss_port, options.bindAddress);
 
     var wsServerInitObj = {server: srv};
