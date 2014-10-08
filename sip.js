@@ -630,7 +630,8 @@ function makeTlsTransport(options, callback, optCallbacks) {
         function(callback) {
             var initObj = {
                 key: fs.readFileSync(options.ssl.key),
-                cert: fs.readFileSync(options.ssl.cert)
+                cert: fs.readFileSync(options.ssl.cert),
+                honorCipherOrder: true
             };
             var server = tls.createServer(initObj, callback);
             server.listen(options.tls_port, options.bindAddress);
