@@ -714,9 +714,6 @@ function makeWsTransportInner(protocol, wsServerInitObj, callback, optCallbacks)
             };
         }
         else {
-            myLogger.error("wsTransport#get ws not is there");
-            myLogger.error("wsTransport#get flows = " + debug(flows) );
-            myLogger.error("wsTransport#get flow = " + debug(flow) );
             return null;
         }
     }
