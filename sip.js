@@ -326,13 +326,13 @@ var stringifiers = {
         return 'Contact: '+ ((h !== '*' && h.length) ? h.map(stringifyAOR).join(', ') : '*') + '\r\n';
     },
     route: function(h) {
-        return h.length ? 'Route: ' + h.map(stringifyAOR).join(', ') + '\r\n' : '';
+        return h && h.length ? 'Route: ' + h.map(stringifyAOR).join(', ') + '\r\n' : '';
     },
     'record-route': function(h) {
-        return h.length ? 'Record-Route: ' + h.map(stringifyAOR).join(', ') + '\r\n' : '';
+        return h && h.length ? 'Record-Route: ' + h.map(stringifyAOR).join(', ') + '\r\n' : '';
     },
     'path': function(h) {
-        return h.length ? 'Path: ' + h.map(stringifyAOR).join(', ') + '\r\n' : '';
+        return h && h.length ? 'Path: ' + h.map(stringifyAOR).join(', ') + '\r\n' : '';
     },
     cseq: function(cseq) {
         return 'CSeq: '+cseq.seq+' '+cseq.method+'\r\n';
